@@ -1,121 +1,214 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
-using System.Text;
-using System.Collections.Specialized;
-using System.Threading.Tasks;
 
 namespace test_git
 {
 
-    public class Trie2
-    {
-        public Node RootNode { get; private set; }
-
-        public Trie2()
-        {
-            RootNode = new Node { Letter = Node.Root };
-        }
-
-        public void Add(string word)
-        {
-            word = word.ToLower() + Node.Eow;
-            var currentNode = RootNode;
-            foreach (var c in word)
-            {
-                currentNode = currentNode.AddChild(c);
-            }
-        }
-
-        public List<string> Match(string prefix, int? maxMatches)
-        {
-            prefix = prefix.ToLower();
-
-            var set = new HashSet<string>();
-
-            _MatchRecursive(RootNode, set, "", prefix, maxMatches);
-            return set.ToList();
-        }
-
-        private static void _MatchRecursive(Node node, ISet<string> rtn, string letters, string prefix, int? maxMatches)
-        {
-            if (maxMatches != null && rtn.Count == maxMatches)
-                return;
-
-            if (node == null)
-            {
-                if (!rtn.Contains(letters)) rtn.Add(letters);
-                return;
-            }
-
-            letters += node.Letter.ToString();
-
-            if (prefix.Length > 0)
-            {
-                if (node.ContainsKey(prefix[0]))
-                {
-                    _MatchRecursive(node[prefix[0]], rtn, letters, prefix.Remove(0, 1), maxMatches);
-                }
-            }
-            else
-            {
-                foreach (char key in node.Keys)
-                {
-                    _MatchRecursive(node[key], rtn, letters, prefix, maxMatches);
-                }
-            }
-        }
-    }
     public class Node
     {
-        public const char Eow = '$';
-        public const char Root = ' ';
 
-        public char Letter { get; set; }
-        public HybridDictionary Children { get; private set; }
+        private readonly Node[] children = new Node[26];
 
-        public Node() { }
-
-        public Node(char letter)
+        public IEnumerable<KeyValuePair<Node, char>> AssignedChildren
         {
-            this.Letter = letter;
-        }
-
-        public Node this[char index]
-        {
-            get { return (Node)Children[index]; }
-        }
-
-        public ICollection Keys
-        {
-            get { return Children.Keys; }
-        }
-
-        public bool ContainsKey(char key)
-        {
-            return Children.Contains(key);
-        }
-
-        public Node AddChild(char letter)
-        {
-            if (Children == null)
-                Children = new HybridDictionary();
-
-            if (!Children.Contains(letter))
+            get
             {
-                var node = letter != Eow ? new Node(letter) : null;
-                Children.Add(letter, node);
-                return node;
+                for (int i = 0; i < 26; i++)
+                {
+                    if (children[i] != null)
+                        yield return new KeyValuePair<Node, char>(children[i], (char)('a' + i));
+                }
             }
-
-            return (Node)Children[letter];
         }
 
-        public override string ToString()
+        public Node GetOrCreate(char c)
         {
-            return this.Letter.ToString();
+            Node child = this[c];
+            if (child == null)
+                child = this[c] = new Node();
+            return child;
         }
+
+        public Node this[char c]
+        {
+            get { return children[c - 'a']; }
+            set { children[c - 'a'] = value; }
+        }
+
+        public bool IsWordTerminator { get; set; }
+
     }
 
+    public class Trie2
+    {
+
+        private readonly Node root = new Node();
+
+        public Node NodeForWord(string word, bool createPath)
+        {
+            Node current = root;
+
+            foreach (char c in word)
+            {
+                if (createPath)
+                    current = current.GetOrCreate(c);
+                else
+                    current = current[c];
+
+                if (current == null)
+                    return null;
+            }
+
+            return current;
+        }
+
+        public void AddNodeForWord(string word)
+        {
+            Node node = NodeForWord(word, true);
+            node.IsWordTerminator = true;
+        }
+
+        public bool ContainsWord(string word)
+        {
+            Node node = NodeForWord(word, false);
+            return node != null && node.IsWordTerminator;
+        }
+
+        public List<string> PrefixedWords(string prefix)
+        {
+            var prefixedWords = new List<string>();
+            Node node = NodeForWord(prefix, false);
+            if (node == null)
+                return prefixedWords;
+
+            PrefixedWordsAux(prefix, node, prefixedWords);
+            return prefixedWords;
+        }
+
+        private void PrefixedWordsAux(string word, Node node, List<string> prefixedWords)
+        {
+            if (node.IsWordTerminator)
+                prefixedWords.Add(word);
+
+            foreach (var child in node.AssignedChildren)
+            {
+                PrefixedWordsAux(word + child.Value, child.Key, prefixedWords);
+            }
+        }
+
+    }
+
+
+    public class AutoCompleteViewModel : INotifyPropertyChanged
+    {
+
+        private Trie2 trie = new Trie2();
+
+        private int prefixMinSize;
+        public int PrefixMinSize
+        {
+            get { return prefixMinSize; }
+            set
+            {
+                if (prefixMinSize != value)
+                {
+                    prefixMinSize = value;
+                    RaisePropertyChanged("PrefixMinSize");
+                }
+            }
+        }
+
+        private string calculationInfo;
+        public string CalculationInfo
+        {
+            get { return calculationInfo; }
+            set
+            {
+                if (calculationInfo != value)
+                {
+                    calculationInfo = value;
+                    RaisePropertyChanged("CalculationInfo");
+                }
+            }
+        }
+
+        private string inputWord;
+        public string InputWord
+        {
+            get { return inputWord; }
+            set
+            {
+                if (inputWord != value)
+                {
+                    value = value.ToLower();
+                    inputWord = string.Join("", value.ToCharArray().Where(c => (int)c >= (int)'a' && (int)c <= (int)'z').ToArray());
+                    RaisePropertyChanged("InputWord");
+                }
+            }
+        }
+
+        public ObservableCollection<string> PrefixList { get; set; }
+
+        public void RaisePropertyChanged(string propertyName)
+        {
+            if (PropertyChanged != null)
+                PropertyChanged(this, new PropertyChangedEventArgs(propertyName));
+        }
+
+
+        #region INotifyPropertyChanged Members
+
+        public event PropertyChangedEventHandler PropertyChanged;
+
+        #endregion
+
+        public AutoCompleteViewModel()
+        {
+            PrefixMinSize = 3;
+            InputWord = "Adv";
+            PrefixList = new ObservableCollection<string>();
+            ProcessDictionaryList();
+        }
+
+        private void ProcessDictionaryList()
+        {
+            foreach (var word in File.ReadLines("english-words"))
+            {
+                trie.AddNodeForWord(word);
+            }
+        }
+
+        public void SetPrefixList()
+        {
+            Stopwatch stopWatch = Stopwatch.StartNew();
+            PrefixList.Clear();
+            var prefixes = GetPrefixList();
+
+            foreach (var prefix in prefixes)
+            {
+                PrefixList.Add(prefix);
+            }
+            //RaisePropertyChanged("PrefixList"); 
+
+            CalculationInfo = string.Format("Retrieved {0} words prefixed with {1}. Operation took {2} ms", PrefixList.Count, inputWord, stopWatch.ElapsedMilliseconds);
+        }
+
+        private List<string> GetPrefixList()
+        {
+            if (InputWord.Length >= PrefixMinSize)
+            {
+                var wordsStartingWithInputWord = trie.PrefixedWords(InputWord.ToLower());
+                return wordsStartingWithInputWord;
+            }
+            return new List<string>();
+        }
+    }
 }
+
+
+
